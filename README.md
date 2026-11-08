@@ -8,7 +8,7 @@ Mises à jour et pilotes au look Ubuntu « Human » de 2008, écrit en Rust (egu
 
 Téléchargez le fichier `.deb` de la [dernière version](https://github.com/jbandrivet/gestionnaire-maj/releases/latest), puis :
 
-    sudo apt install ./gestionnaire-maj_1.2.0_amd64.deb
+    sudo apt install ./gestionnaire-maj_1.3.0_amd64.deb
 
 Puis : menu des applications → **Gestionnaire de mises à jour**.
 
@@ -21,7 +21,8 @@ Puis : menu des applications → **Gestionnaire de mises à jour**.
 - **Pilotes** : pilotes recommandés pour le matériel (via `ubuntu-drivers`),
   bouton Activer / Désactiver, et tableau du matériel avec le pilote utilisé.
 - **Mise à niveau** (onglet) : version installée et fin de sa prise en charge,
-  choix des versions proposées (toutes, LTS seulement, jamais, plus en option
+  choix des versions proposées (LTS seulement — réglé par défaut à l'installation —,
+  toutes, jamais, plus en option
   les versions en développement) et tableau des versions d'Ubuntu. Quand une
   nouvelle version sort, un bandeau jaune l'annonce avec **Mettre à niveau…** ;
   après une confirmation, l'assistant officiel d'Ubuntu prend le relais.

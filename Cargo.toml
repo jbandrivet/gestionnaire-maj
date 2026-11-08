@@ -1,6 +1,6 @@
 [package]
 name = "gestionnaire-maj"
-version = "1.2.0"
+version = "1.3.0"
 edition = "2021"
 description = "Gestionnaire de mises à jour et de pilotes au look Ubuntu Human (2008)"
 license = "GPL-3.0-or-later"

@@ -56,6 +56,29 @@ Description: Gestionnaire de mises à jour et de pilotes au look Ubuntu Human (2
  « Installer ». Le gestionnaire se met lui-même à jour depuis GitHub.
 CONTROL
 
+# Première installation (ou depuis une version < 1.3.0) : ne proposer que les versions LTS
+cat > "$ROOT/DEBIAN/postinst" <<'POSTINST'
+#!/bin/sh
+set -e
+if [ "$1" = "configure" ]; then
+    if [ -z "$2" ] || dpkg --compare-versions "$2" lt 1.3.0; then
+        f=/etc/update-manager/release-upgrades
+        if [ -f "$f" ]; then
+            if grep -q '^Prompt=' "$f"; then
+                sed -i 's/^Prompt=.*/Prompt=lts/' "$f"
+            else
+                printf 'Prompt=lts\n' >> "$f"
+            fi
+        else
+            mkdir -p /etc/update-manager
+            printf '[DEFAULT]\nPrompt=lts\n' > "$f"
+        fi
+    fi
+fi
+exit 0
+POSTINST
+chmod 755 "$ROOT/DEBIAN/postinst"
+
 # À la désinstallation, arrêter les veilles qui tournent encore
 cat > "$ROOT/DEBIAN/prerm" <<'PRERM'
 #!/bin/sh

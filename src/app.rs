@@ -1396,8 +1396,8 @@ impl Appli {
                 ui.add_space(2.0);
                 let mut choisi = None;
                 for (val, titre, aide_txt) in [
-                    ("normal", "Toutes les nouvelles versions", "Une version tous les 6 mois, prise en charge 9 mois : les nouveautés arrivent vite."),
-                    ("lts", "Seulement les versions LTS (support longue durée)", "Une version tous les 2 ans, prise en charge 5 ans : le choix le plus tranquille."),
+                    ("lts", "Seulement les versions LTS (recommandé)", "Support longue durée : une version tous les 2 ans, prise en charge 5 ans. Le choix le plus tranquille."),
+                    ("normal", "Toutes les nouvelles versions", "Une version tous les 6 mois, prise en charge 9 mois : les nouveautés arrivent plus vite."),
                     ("never", "Jamais", "L'ordinateur reste sur la version actuelle."),
                 ] {
                     if radio(ui, self.prevenir == val, titre, aide_txt, self.travail.is_none()) && self.prevenir != val {
@@ -1409,7 +1409,7 @@ impl Appli {
                         ui.add_space(26.0);
                         theme::icone(ui, Icone::Attention, 16.0);
                         ui.add(egui::Label::new(RichText::new(format!(
-                            "Votre version est une version normale, prise en charge jusqu'en {} : pour rester protégé, choisissez plutôt « Toutes les nouvelles versions ».",
+                            "Votre version n'est pas une LTS : elle est prise en charge jusqu'en {}. Avant cette date, passez à la version suivante (choix « Toutes les nouvelles versions ») si aucune LTS n'est encore sortie.",
                             fin_support(&actuelle, false)
                         )).color(theme::BRUN_FONCE).size(12.0)).wrap());
                     });
