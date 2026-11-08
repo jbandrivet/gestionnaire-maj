@@ -1,0 +1,21 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Gestionnaire de mises à jour
+GenericName=Mises à jour et pilotes
+Comment=Installer les mises à jour des logiciels et les pilotes du matériel
+Keywords=mise à jour;mises à jour;update;upgrade;pilote;pilotes;driver;nvidia;apt;snap;flatpak;
+Exec=/usr/bin/gestionnaire-maj
+Icon=gestionnaire-maj
+Terminal=false
+StartupWMClass=gestionnaire-maj
+Categories=System;PackageManager;
+Actions=Pilotes;Installer;
+
+[Desktop Action Pilotes]
+Name=Pilotes du matériel
+Exec=/usr/bin/gestionnaire-maj --pilotes
+
+[Desktop Action Installer]
+Name=Installer les mises à jour maintenant
+Exec=/usr/bin/gestionnaire-maj --installer

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <defs>
+    <radialGradient id="o" cx="0.38" cy="0.32" r="0.75">
+      <stop offset="0" stop-color="#FFD9A3"/>
+      <stop offset="0.45" stop-color="#FCAF3E"/>
+      <stop offset="1" stop-color="#CE5C00"/>
+    </radialGradient>
+    <linearGradient id="c" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F3CC8E"/>
+      <stop offset="1" stop-color="#D9A050"/>
+    </linearGradient>
+  </defs>
+  <path d="M2.5 9 L12 5.5 L21.5 9 L21.5 19 L12 22.5 L2.5 19 Z" fill="url(#c)" stroke="#8F5902" stroke-width="0.6" stroke-linejoin="round"/>
+  <path d="M2.5 9 L12 12.5 L12 22.5 L2.5 19 Z" fill="#C17D11" stroke="#8F5902" stroke-width="0.6" stroke-linejoin="round"/>
+  <path d="M12 12.5 L21.5 9" stroke="#8F5902" stroke-width="0.6"/>
+  <path d="M7.2 7.3 L16.8 10.8" stroke="#FCE94F" stroke-width="1.6"/>
+  <circle cx="17" cy="7" r="6.3" fill="url(#o)" stroke="#A44500" stroke-width="0.6"/>
+  <path d="M15.4 2.9 H18.6 V6.6 H20.7 L17 10.8 L13.3 6.6 H15.4 Z" fill="#FFFFFF" stroke="#A44500" stroke-width="0.5" stroke-linejoin="round"/>
+</svg>

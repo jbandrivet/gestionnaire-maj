@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Gestionnaire de mises à jour</vendor>
+  <icon_name>gestionnaire-maj</icon_name>
+
+  <!-- Relire la liste des logiciels : sans danger, permis sans mot de passe
+       à la personne assise devant l'ordinateur (comme PackageKit). -->
+  <action id="org.gestionnairemaj.actualiser">
+    <description>Check for software updates</description>
+    <description xml:lang="fr">Rechercher les mises à jour des logiciels</description>
+    <message>Authentication is required to check for software updates</message>
+    <message xml:lang="fr">Une authentification est nécessaire pour rechercher les mises à jour</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/gestionnaire-maj/actualiser</annotate>
+  </action>
+
+  <!-- Installer des mises à jour ou des pilotes : mot de passe administrateur,
+       gardé quelques minutes. -->
+  <action id="org.gestionnairemaj.aide">
+    <description>Install software updates and drivers</description>
+    <description xml:lang="fr">Installer des mises à jour et des pilotes</description>
+    <message>Authentication is required to install software updates or drivers</message>
+    <message xml:lang="fr">Une authentification est nécessaire pour installer des mises à jour ou des pilotes</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/gestionnaire-maj/aide</annotate>
+  </action>
+</policyconfig>

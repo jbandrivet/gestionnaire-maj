@@ -1,0 +1,26 @@
+[package]
+name = "gestionnaire-maj"
+version = "1.1.0"
+edition = "2021"
+description = "Gestionnaire de mises à jour et de pilotes au look Ubuntu Human (2008)"
+license = "GPL-3.0-or-later"
+authors = ["Jean-Baptiste Andrivet <jeanbaptisteandrivet@gmail.com>"]
+
+[[bin]]
+name = "gestionnaire-maj"
+path = "src/main.rs"
+
+[[bin]]
+name = "gestionnaire-maj-aide"
+path = "src/bin/aide.rs"
+
+[dependencies]
+eframe = { version = "0.37", default-features = false, features = ["glow", "x11", "wayland", "default_fonts"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true

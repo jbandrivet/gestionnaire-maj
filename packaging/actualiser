@@ -1,0 +1,3 @@
+#!/bin/sh
+# Relit la liste des logiciels disponibles (lancé par pkexec, sans mot de passe).
+exec /usr/libexec/gestionnaire-maj/aide actualiser
