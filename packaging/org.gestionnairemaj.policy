@@ -21,6 +21,21 @@
     <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/gestionnaire-maj/actualiser</annotate>
   </action>
 
+  <!-- Mettre à jour le gestionnaire lui-même depuis son dépôt GitHub : l'adresse
+       est fixe et seul un paquet gestionnaire-maj plus récent est accepté. -->
+  <action id="org.gestionnairemaj.automaj">
+    <description>Update the update manager itself</description>
+    <description xml:lang="fr">Mettre à jour le gestionnaire de mises à jour</description>
+    <message>Authentication is required to update the update manager</message>
+    <message xml:lang="fr">Une authentification est nécessaire pour mettre à jour le gestionnaire de mises à jour</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/gestionnaire-maj/auto-maj</annotate>
+  </action>
+
   <!-- Installer des mises à jour ou des pilotes : mot de passe administrateur,
        gardé quelques minutes. -->
   <action id="org.gestionnairemaj.aide">

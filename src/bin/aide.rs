@@ -11,6 +11,7 @@
 //!   aide maj [--tout] [--paquets p1 p2 …] [--snap [s1 s2 …]]
 //!   aide installer p1 …      (pilotes)
 //!   aide retirer p1 …        (pilotes)
+//!   aide auto-maj            (met à jour le gestionnaire depuis GitHub)
 //!   aide version normal|lts|never   (prévenir des nouvelles versions d'Ubuntu)
 
 use std::fs;
@@ -256,6 +257,106 @@ fn actualiser() -> i32 {
     lancer("apt-get", &a, true)
 }
 
+// ---------------------------------------------------------------------------
+//  Mise à jour du gestionnaire depuis GitHub
+//  Aucune donnée ne vient de l'utilisateur : adresse du dépôt fixe, paquet vérifié
+//  (nom exact, version strictement plus récente que celle installée).
+// ---------------------------------------------------------------------------
+const DEPOT: &str = "jbandrivet/gestionnaire-maj";
+const PAQUET: &str = "gestionnaire-maj";
+
+fn sortie_cmd(prog: &str, args: &[&str]) -> Option<String> {
+    let o = Command::new(prog)
+        .args(args)
+        .env("LC_ALL", "C")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
+fn version_plus_recente(a: &str, b: &str) -> bool {
+    // dpkg --compare-versions a gt b
+    Command::new("dpkg")
+        .args(["--compare-versions", a, "gt", b])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn auto_maj() -> i32 {
+    etape("Recherche d'une nouvelle version du gestionnaire");
+    let installee = sortie_cmd("dpkg-query", &["-W", "-f=${Version}", PAQUET]).unwrap_or_default();
+    let arch = sortie_cmd("dpkg", &["--print-architecture"]).unwrap_or_else(|| "amd64".into());
+    let api = format!("https://api.github.com/repos/{DEPOT}/releases/latest");
+    let Some(json) = sortie_cmd("curl", &["-fsSL", "-m", "30", "--proto", "=https", &api]) else {
+        dire("GitHub ne répond pas.");
+        return 1;
+    };
+    let Ok(j) = serde_json::from_str::<serde_json::Value>(&json) else {
+        dire("Réponse de GitHub illisible.");
+        return 1;
+    };
+    let tag = j.get("tag_name").and_then(|t| t.as_str()).unwrap_or("");
+    let version = tag.trim_start_matches('v');
+    if !version.chars().all(|c| c.is_ascii_alphanumeric() || ".+~-".contains(c)) || version.is_empty() {
+        dire("Numéro de version refusé.");
+        return 1;
+    }
+    if !installee.is_empty() && !version_plus_recente(version, &installee) {
+        dire(&format!("Le gestionnaire est déjà à jour (version {installee})."));
+        dire(&format!("@@INSTALLE:{installee}"));
+        return 0;
+    }
+    let prefixe = format!("https://github.com/{DEPOT}/releases/download/");
+    let fichier = format!("{PAQUET}_{version}_{arch}.deb");
+    let url = j
+        .get("assets")
+        .and_then(|a| a.as_array())
+        .and_then(|a| {
+            a.iter()
+                .filter_map(|x| x.get("browser_download_url").and_then(|u| u.as_str()))
+                .find(|u| u.starts_with(&prefixe) && u.ends_with(&format!("/{fichier}")))
+        })
+        .map(|s| s.to_string());
+    let Some(url) = url else {
+        dire(&format!("Le fichier {fichier} n'est pas dans la version {tag}."));
+        return 1;
+    };
+    etape(&format!("Téléchargement de la version {version}"));
+    let dossier = format!("/var/cache/{PAQUET}");
+    let _ = fs::create_dir_all(&dossier);
+    let _ = fs::set_permissions(&dossier, std::os::unix::fs::PermissionsExt::from_mode(0o700));
+    let chemin = format!("{dossier}/{fichier}");
+    let _ = fs::remove_file(&chemin);
+    let ok = Command::new("curl")
+        .args(["-fsSL", "-m", "300", "--proto", "=https", "--proto-redir", "=https", "-o", &chemin, &url])
+        .stdin(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok {
+        dire("Le téléchargement a échoué.");
+        return 1;
+    }
+    // Vérification du paquet téléchargé
+    let nom = sortie_cmd("dpkg-deb", &["-f", &chemin, "Package"]).unwrap_or_default();
+    let v_paquet = sortie_cmd("dpkg-deb", &["-f", &chemin, "Version"]).unwrap_or_default();
+    if nom != PAQUET || v_paquet != version || (!installee.is_empty() && !version_plus_recente(&v_paquet, &installee)) {
+        dire(&format!("Paquet refusé ({nom} {v_paquet})."));
+        let _ = fs::remove_file(&chemin);
+        return 1;
+    }
+    etape(&format!("Installation de la version {version}"));
+    let code = apt(&["install"], &[chemin.clone()]);
+    let _ = fs::remove_file(&chemin);
+    if code == 0 {
+        dire(&format!("@@INSTALLE:{version}"));
+    }
+    code
+}
+
 fn regler_prompt(v: &str) -> i32 {
     let f = "/etc/update-manager/release-upgrades";
     let texte = fs::read_to_string(f).unwrap_or_else(|_| "[DEFAULT]\n".into());
@@ -380,6 +481,7 @@ fn main() {
             }
             code
         }
+        Some("auto-maj") => auto_maj(),
         Some("version") => {
             // Réglage « me prévenir d'une nouvelle version d'Ubuntu »
             let v = args.get(1).map(|s| s.as_str()).unwrap_or("");

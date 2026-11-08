@@ -8,7 +8,7 @@ Mises à jour et pilotes au look Ubuntu « Human » de 2008, écrit en Rust (egu
 
 Téléchargez le fichier `.deb` de la [dernière version](https://github.com/jbandrivet/gestionnaire-maj/releases/latest), puis :
 
-    sudo apt install ./gestionnaire-maj_1.1.0_amd64.deb
+    sudo apt install ./gestionnaire-maj_1.2.0_amd64.deb
 
 Puis : menu des applications → **Gestionnaire de mises à jour**.
 
@@ -20,10 +20,15 @@ Puis : menu des applications → **Gestionnaire de mises à jour**.
   mises à jour » demande le mot de passe une fois, puis montre l'avancement.
 - **Pilotes** : pilotes recommandés pour le matériel (via `ubuntu-drivers`),
   bouton Activer / Désactiver, et tableau du matériel avec le pilote utilisé.
-- **Mise à niveau** : quand une nouvelle version d'Ubuntu sort, un bandeau
-  jaune l'annonce avec **Mettre à niveau…** ; après une confirmation (sauvegarde,
-  secteur…), l'assistant officiel d'Ubuntu prend le relais. Paramètres → « Me
-  prévenir d'une nouvelle version » : toute version, LTS seulement ou jamais.
+- **Mise à niveau** (onglet) : version installée et fin de sa prise en charge,
+  choix des versions proposées (toutes, LTS seulement, jamais, plus en option
+  les versions en développement) et tableau des versions d'Ubuntu. Quand une
+  nouvelle version sort, un bandeau jaune l'annonce avec **Mettre à niveau…** ;
+  après une confirmation, l'assistant officiel d'Ubuntu prend le relais.
+- **Se met à jour tout seul** depuis les versions publiées sur GitHub (au
+  démarrage puis toutes les 6 h, sans mot de passe). L'assistant administrateur
+  télécharge lui-même le paquet depuis l'adresse fixe du dépôt et refuse tout
+  paquet qui n'est pas un gestionnaire-maj plus récent. Réglage dans Paramètres.
 - **Lancer au démarrage** : la case en bas de la fenêtre (ou dans Paramètres)
   démarre une veille avec la session. Quand des mises à jour arrivent, une
   bulle s'affiche en haut à droite avec **Installer**, **Voir les détails** et

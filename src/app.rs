@@ -23,8 +23,22 @@ pub enum Mode {
     MiseANiveau,
 }
 
+/// Mise à jour du gestionnaire lui-même depuis GitHub
+#[derive(Clone, PartialEq)]
+enum AutoMaj {
+    Rien,
+    Recherche,
+    AJour(String),
+    Disponible(String),
+    EnCours(String),
+    Fait(String),
+    Erreur(String),
+}
+
 enum Msg {
     Recherche(Recherche),
+    Versions(Vec<VersionUbuntu>),
+    AutoMaj(AutoMaj),
     Pilotes(Pilotes),
     Modifs(String, String),
     Ligne(String),
@@ -89,6 +103,9 @@ pub struct Appli {
     prevenir: String,
     prevenir_initial: String,
     erreur_version: Option<String>,
+    versions: Option<Vec<VersionUbuntu>>,
+    versions_occupe: bool,
+    auto_maj: AutoMaj,
 }
 
 impl Appli {
@@ -99,7 +116,11 @@ impl Appli {
             tx,
             rx,
             ctx: cc.egui_ctx.clone(),
-            onglet: if mode == Mode::Pilotes { 1 } else { 0 },
+            onglet: match mode {
+                Mode::Pilotes => 1,
+                Mode::MiseANiveau => 2,
+                _ => 0,
+            },
             reglages: Reglages::charger(),
             demarrage: demarrage_actif(),
             message_demarrage: None,
@@ -123,7 +144,14 @@ impl Appli {
             prevenir: prevenir_versions(),
             prevenir_initial: prevenir_versions(),
             erreur_version: None,
+            versions: None,
+            versions_occupe: false,
+            auto_maj: AutoMaj::Rien,
         };
+        if mode == Mode::MiseANiveau {
+            a.lancer_versions();
+        }
+        a.verifier_gestionnaire(false);
         if std::env::var_os("GMAJ_DESC").is_some() {
             a.desc_ouverte = true;
             a.selection = Some(0);
@@ -166,6 +194,50 @@ impl Appli {
         thread::spawn(move || {
             let _ = tx.send(Msg::Pilotes(chercher_pilotes()));
             ctx.request_repaint();
+        });
+    }
+
+    fn lancer_versions(&mut self) {
+        if self.versions_occupe {
+            return;
+        }
+        self.versions_occupe = true;
+        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        thread::spawn(move || {
+            let _ = tx.send(Msg::Versions(versions_ubuntu()));
+            ctx.request_repaint();
+        });
+    }
+
+    /// Cherche une nouvelle version du gestionnaire sur GitHub et l'installe toute seule
+    /// si le réglage le permet (sans mot de passe, grâce à polkit).
+    fn verifier_gestionnaire(&mut self, demande: bool) {
+        if !installe_par_paquet() || matches!(self.auto_maj, AutoMaj::Recherche | AutoMaj::EnCours(_)) {
+            if demande && !installe_par_paquet() {
+                self.auto_maj = AutoMaj::Erreur("Lancé depuis les sources : pas de mise à jour automatique.".into());
+            }
+            return;
+        }
+        self.auto_maj = AutoMaj::Recherche;
+        let auto = self.reglages.auto_maj_logiciel;
+        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        thread::spawn(move || {
+            let envoyer = |e: AutoMaj| {
+                let _ = tx.send(Msg::AutoMaj(e));
+                ctx.request_repaint();
+            };
+            match derniere_version_github() {
+                None => envoyer(AutoMaj::Erreur("GitHub ne répond pas.".into())),
+                Some(v) if !plus_recente(&v, VERSION) => envoyer(AutoMaj::AJour(v)),
+                Some(v) if auto && auto_maj_sans_mot_de_passe() => {
+                    envoyer(AutoMaj::EnCours(v.clone()));
+                    match auto_maj_silencieuse() {
+                        Ok(_) => envoyer(AutoMaj::Fait(v)),
+                        Err(e) => envoyer(AutoMaj::Erreur(e)),
+                    }
+                }
+                Some(v) => envoyer(AutoMaj::Disponible(v)),
+            }
         });
     }
 
@@ -212,6 +284,11 @@ impl Appli {
                     self.pilotes_occupe = false;
                     self.sel_pilote = None;
                 }
+                Msg::Versions(v) => {
+                    self.versions = Some(v);
+                    self.versions_occupe = false;
+                }
+                Msg::AutoMaj(e) => self.auto_maj = e,
                 Msg::Modifs(cle, texte) => {
                     self.modifs.insert(cle, Some(texte));
                 }
@@ -312,6 +389,11 @@ impl Appli {
     }
 
     fn ligne_travail(&mut self, l: String) {
+        if let Some(v) = l.strip_prefix("@@INSTALLE:") {
+            if plus_recente(v, VERSION) {
+                self.auto_maj = AutoMaj::Fait(v.to_string());
+            }
+        }
         let Some(t) = self.travail.as_mut() else { return };
         if let Some(s) = l.strip_prefix("@@") {
             if let Some(e) = s.strip_prefix("ETAPE:") {
@@ -1075,19 +1157,11 @@ impl Appli {
                 theme::case(ui, &mut self.reglages.pilotes, "Les pilotes recommandés pour mon matériel");
             });
             ui.add_space(10.0);
-            ui.label(RichText::new("Nouvelles versions d'Ubuntu").font(theme::police_gras(13.0)));
-            egui::Grid::new("grille_versions").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
-                ui.label("    Me prévenir d'une nouvelle version :");
-                choix_texte(ui, "prevenir", &mut self.prevenir, &[
-                    ("normal", "pour toute nouvelle version"),
-                    ("lts", "pour les versions LTS seulement"),
-                    ("never", "jamais"),
-                ]);
-                ui.end_row();
+            ui.label(RichText::new("Ce logiciel").font(theme::police_gras(13.0)));
+            ui.indent("r3", |ui| {
+                theme::case(ui, &mut self.reglages.auto_maj_logiciel, "Le mettre à jour automatiquement depuis GitHub");
+                ui.label(RichText::new("Le choix des nouvelles versions d'Ubuntu est dans l'onglet « Mise à niveau ».").color(GRIS).size(11.5));
             });
-            if self.prevenir != self.prevenir_initial {
-                ui.label(RichText::new("    Ce réglage du système demandera votre mot de passe.").color(GRIS).size(11.5));
-            }
             ui.add_space(10.0);
             ui.label(RichText::new("Démarrage").font(theme::police_gras(13.0)));
             ui.indent("r2", |ui| {
@@ -1106,17 +1180,9 @@ impl Appli {
         if fermer {
             self.reglages.enregistrer();
             self.reglages_ouverts = false;
-            if self.prevenir != self.prevenir_initial {
-                self.prevenir_initial = self.prevenir.clone();
-                let cmd = en_admin(&[&aide().display().to_string(), "version", &self.prevenir]);
-                self.commencer(
-                    "Réglage des nouvelles versions d'Ubuntu",
-                    "Le choix est enregistré dans le système (/etc/update-manager/release-upgrades).",
-                    vec![Etape { texte: "Enregistrement du réglage".into(), cmd }],
-                    Apres::Recherche,
-                );
-            } else {
-                self.lancer_recherche(false);
+            self.lancer_recherche(false);
+            if self.reglages.auto_maj_logiciel && matches!(self.auto_maj, AutoMaj::Disponible(_)) {
+                self.verifier_gestionnaire(true);
             }
         }
     }
@@ -1199,7 +1265,7 @@ impl Appli {
             self.confirmer_version = false;
             self.installer();
         } else if lancer_niveau {
-            match lancer_mise_a_niveau() {
+            match lancer_mise_a_niveau(self.reglages.devel) {
                 Ok(()) => {
                     self.confirmer_version = false;
                     self.message_demarrage = Some("L'assistant de mise à niveau d'Ubuntu s'ouvre (votre mot de passe va être demandé).".into());
@@ -1211,6 +1277,225 @@ impl Appli {
         }
     }
 
+    /// Barre « nouvelle version du gestionnaire » (en haut de chaque onglet).
+    fn barre_gestionnaire(&mut self, ui: &mut Ui) {
+        let (texte, bouton_txt, ic) = match &self.auto_maj {
+            AutoMaj::Disponible(v) => (format!("Une nouvelle version de ce gestionnaire ({v}) est disponible sur GitHub."), Some("Mettre à jour le gestionnaire"), Icone::Info),
+            AutoMaj::EnCours(v) => (format!("Mise à jour de ce gestionnaire en version {v}…"), None, Icone::Verifier),
+            AutoMaj::Fait(v) => (format!("Ce gestionnaire a été mis à jour en version {v}."), Some("Relancer"), Icone::AJour),
+            _ => return,
+        };
+        let mut clic = false;
+        egui::Panel::top("barre_gestionnaire").frame(Frame::new()).show(ui, |ui| {
+            egui::Frame::new()
+                .fill(Color32::from_rgb(0xE6, 0xF0, 0xFA))
+                .stroke(Stroke::new(1.0, Color32::from_rgb(0x72, 0x9F, 0xCF)))
+                .corner_radius(3)
+                .inner_margin(Margin::symmetric(10, 4))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        theme::icone(ui, ic, 22.0);
+                        ui.label(texte);
+                        if let Some(b) = bouton_txt {
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                clic = bouton(ui, None, b, self.travail.is_none(), true).clicked();
+                            });
+                        }
+                    });
+                });
+            ui.add_space(8.0);
+        });
+        if clic {
+            match &self.auto_maj {
+                AutoMaj::Fait(_) => {
+                    lancer_detache(&[]);
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                AutoMaj::Disponible(v) => {
+                    let v = v.clone();
+                    self.commencer(
+                        "Mise à jour du gestionnaire",
+                        &format!("La version {v} est téléchargée depuis GitHub puis installée."),
+                        vec![Etape { texte: "Mise à jour du gestionnaire".into(), cmd: commande_auto_maj() }],
+                        Apres::Recherche,
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    //  Onglet « Mise à niveau » (nouvelles versions d'Ubuntu)
+    // -----------------------------------------------------------------------
+    fn vue_niveau(&mut self, ui: &mut Ui) {
+        let (actuelle, lts) = version_installee();
+        let texte = format!(
+            "Vous utilisez {} ({}, prise en charge jusqu'en {}).",
+            systeme_actuel(),
+            if lts { "version LTS" } else { "version normale" },
+            fin_support(&actuelle, lts)
+        );
+        egui::Panel::top("niv_entete").frame(Frame::new()).show(ui, |ui| Self::entete(ui, Icone::Appli, "Version d'Ubuntu", &texte));
+        let nv = self.recherche.as_ref().and_then(|r| r.nouvelle_version.clone());
+        egui::Panel::bottom("niv_bas").frame(Frame::new()).show(ui, |ui| {
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                let libre = self.travail.is_none();
+                if bouton(ui, Some(Icone::Verifier), "Rechercher une nouvelle version", libre && self.occupe.is_none(), false).clicked() {
+                    self.versions = None;
+                    self.lancer_versions();
+                    self.lancer_recherche(false);
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let t = match &nv {
+                        Some(v) => format!("Mettre à niveau vers {}…", v.version),
+                        None => "Mettre à niveau…".into(),
+                    };
+                    if bouton(ui, Some(Icone::Installer), &t, libre && nv.is_some(), true).clicked() {
+                        self.erreur_version = None;
+                        self.confirmer_version = true;
+                    }
+                });
+            });
+            ui.add_space(4.0);
+        });
+        egui::CentralPanel::default().frame(Frame::new()).show(ui, |ui| {
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                match (&nv, &self.occupe) {
+                    (Some(v), _) => {
+                        if bandeau_version(ui, v, self.travail.is_none()) {
+                            self.erreur_version = None;
+                            self.confirmer_version = true;
+                        }
+                    }
+                    (None, Some(_)) => {
+                        ui.horizontal(|ui| {
+                            ui.add(egui::Spinner::new().size(16.0).color(SEL));
+                            ui.label(RichText::new("Recherche d'une nouvelle version…").color(GRIS));
+                        });
+                        ui.add_space(8.0);
+                    }
+                    (None, None) => {
+                        ui.horizontal(|ui| {
+                            theme::icone(ui, Icone::AJour, 22.0);
+                            let t = match self.prevenir.as_str() {
+                                "never" => "Les nouvelles versions ne sont pas proposées (réglage « Jamais »).",
+                                "lts" => "Aucune nouvelle version LTS à installer pour le moment.",
+                                _ => "Aucune nouvelle version à installer pour le moment.",
+                            };
+                            ui.label(t);
+                        });
+                        ui.add_space(8.0);
+                    }
+                }
+
+                // ---- choix des versions proposées ----
+                ui.label(RichText::new("Quelles nouvelles versions me proposer ?").font(theme::police_gras(13.0)));
+                ui.add_space(2.0);
+                let mut choisi = None;
+                for (val, titre, aide_txt) in [
+                    ("normal", "Toutes les nouvelles versions", "Une version tous les 6 mois, prise en charge 9 mois : les nouveautés arrivent vite."),
+                    ("lts", "Seulement les versions LTS (support longue durée)", "Une version tous les 2 ans, prise en charge 5 ans : le choix le plus tranquille."),
+                    ("never", "Jamais", "L'ordinateur reste sur la version actuelle."),
+                ] {
+                    if radio(ui, self.prevenir == val, titre, aide_txt, self.travail.is_none()) && self.prevenir != val {
+                        choisi = Some(val);
+                    }
+                }
+                if !lts && self.prevenir == "lts" {
+                    ui.horizontal(|ui| {
+                        ui.add_space(26.0);
+                        theme::icone(ui, Icone::Attention, 16.0);
+                        ui.add(egui::Label::new(RichText::new(format!(
+                            "Votre version est une version normale, prise en charge jusqu'en {} : pour rester protégé, choisissez plutôt « Toutes les nouvelles versions ».",
+                            fin_support(&actuelle, false)
+                        )).color(theme::BRUN_FONCE).size(12.0)).wrap());
+                    });
+                }
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(4.0);
+                    let mut d = self.reglages.devel;
+                    if theme::case(ui, &mut d, "Proposer aussi les versions en développement (pour les essais, déconseillé)").changed() {
+                        self.reglages.devel = d;
+                        self.reglages.enregistrer();
+                        self.lancer_recherche(false);
+                    }
+                });
+                if let Some(val) = choisi {
+                    self.prevenir = val.to_string();
+                    self.prevenir_initial = self.prevenir.clone();
+                    let cmd = en_admin(&[&aide().display().to_string(), "version", val]);
+                    self.commencer(
+                        "Réglage des nouvelles versions d'Ubuntu",
+                        "Le choix est enregistré dans le système. Votre mot de passe peut être demandé.",
+                        vec![Etape { texte: "Enregistrement du réglage".into(), cmd }],
+                        Apres::Recherche,
+                    );
+                }
+
+                // ---- tableau des versions ----
+                ui.add_space(12.0);
+                ui.label(RichText::new("Versions d'Ubuntu").font(theme::police_gras(13.0)));
+                ui.add_space(2.0);
+                theme::cadre_blanc().show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    let larg = ui.available_width();
+                    let cols = [0.0, 0.19, 0.43, 0.60, 0.80];
+                    let titres = ["Version", "Nom", "Type", "Prise en charge jusqu'en", "État"];
+                    let (rh, _) = ui.allocate_exact_size(vec2(larg, 24.0), Sense::hover());
+                    let p = ui.painter();
+                    theme::degrade(p, rh, Color32::from_rgb(0xF8, 0xF6, 0xF3), Color32::from_rgb(0xE4, 0xDE, 0xD6), 0);
+                    p.line_segment([rh.left_bottom(), rh.right_bottom()], Stroke::new(1.0, BORD));
+                    for (c, t) in cols.iter().zip(titres) {
+                        p.text(pos2(rh.left() + larg * c + 8.0, rh.center().y), Align2::LEFT_CENTER, t, theme::police(12.5), TEXTE);
+                    }
+                    match &self.versions {
+                        None => attente(ui, "Lecture de la liste des versions d'Ubuntu…"),
+                        Some(v) if v.is_empty() => {
+                            ui.add_space(8.0);
+                            ui.label(RichText::new("  La liste n'a pas pu être téléchargée.").color(GRIS));
+                            ui.add_space(8.0);
+                        }
+                        Some(v) => {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            for (k, x) in v.iter().enumerate() {
+                                let (rect, _) = ui.allocate_exact_size(vec2(larg, 24.0), Sense::hover());
+                                let p = ui.painter();
+                                let fond = if x.installee { theme::SEL_CLAIR } else if k % 2 == 1 { LIGNE_PAIRE } else { BLANC };
+                                p.rect_filled(rect, 0, fond);
+                                let (etat, c_etat) = if x.installee {
+                                    ("Installée", theme::VERT)
+                                } else if x.developpement {
+                                    ("En développement", Color32::from_rgb(0xCE, 0x5C, 0x00))
+                                } else if plus_recente(&x.version, &actuelle) {
+                                    if x.prise_en_charge { ("Disponible", Color32::from_rgb(0x20, 0x4A, 0x87)) } else { ("Plus prise en charge", GRIS_CLAIR) }
+                                } else {
+                                    ("Dernière LTS", GRIS)
+                                };
+                                let valeurs = [
+                                    format!("Ubuntu {}", x.version),
+                                    x.nom.clone(),
+                                    if x.lts { "LTS (5 ans)".into() } else { "normale (9 mois)".into() },
+                                    x.fin_support(),
+                                ];
+                                for (i, val) in valeurs.iter().enumerate() {
+                                    let f = if i == 0 { theme::police_gras(12.5) } else { theme::police(12.5) };
+                                    let w = larg * (cols[i + 1] - cols[i]) - 12.0;
+                                    let g = theme::texte_coupe(p, val, f, TEXTE, w);
+                                    p.galley(pos2(rect.left() + larg * cols[i] + 8.0, rect.center().y - g.size().y / 2.0), g, TEXTE);
+                                }
+                                p.text(pos2(rect.left() + larg * cols[4] + 8.0, rect.center().y), Align2::LEFT_CENTER, etat, theme::police_gras(12.0), c_etat);
+                            }
+                        }
+                    }
+                });
+            });
+        });
+    }
+
     fn fenetre_a_propos(&mut self, ctx: &Context) {
         let cadre = Frame::window(&ctx.global_style()).inner_margin(Margin::same(18)).fill(theme::FOND);
         let mut fermer = false;
@@ -1220,6 +1505,25 @@ impl Appli {
                 theme::icone(ui, Icone::Appli, 64.0);
                 ui.label(RichText::new(format!("{NOM} {VERSION}")).font(theme::police_gras(16.0)));
                 ui.label("Mises à jour et pilotes, au look Ubuntu « Human » de 2008.");
+                ui.add_space(6.0);
+                ui.hyperlink_to(format!("github.com/{DEPOT}"), format!("https://github.com/{DEPOT}"));
+                ui.add_space(4.0);
+                let etat = match &self.auto_maj {
+                    AutoMaj::Rien => String::new(),
+                    AutoMaj::Recherche => "Recherche d'une nouvelle version sur GitHub…".into(),
+                    AutoMaj::AJour(v) => format!("Ce logiciel est à jour (dernière version : {v})."),
+                    AutoMaj::Disponible(v) => format!("La version {v} est disponible sur GitHub."),
+                    AutoMaj::EnCours(v) => format!("Installation de la version {v}…"),
+                    AutoMaj::Fait(v) => format!("La version {v} est installée : relancez le logiciel."),
+                    AutoMaj::Erreur(e) => format!("Vérification impossible : {e}"),
+                };
+                if !etat.is_empty() {
+                    ui.label(RichText::new(etat).color(GRIS));
+                }
+                let libre = !matches!(self.auto_maj, AutoMaj::Recherche | AutoMaj::EnCours(_));
+                if bouton(ui, Some(Icone::Verifier), "Rechercher une mise à jour de ce logiciel", libre, false).clicked() {
+                    self.verifier_gestionnaire(true);
+                }
                 ui.add_space(6.0);
                 ui.label(RichText::new("© 2026 Jean-Baptiste Andrivet — licence GPL 3 ou ultérieure").color(GRIS));
                 ui.add_space(10.0);
@@ -1248,6 +1552,20 @@ impl Appli {
     }
 }
 
+/// Bouton radio avec un titre et une ligne d'explication. Renvoie vrai au clic.
+fn radio(ui: &mut Ui, actif: bool, titre: &str, explication: &str, permis: bool) -> bool {
+    let larg = ui.available_width();
+    let (rect, rep) = ui.allocate_exact_size(vec2(larg, 40.0), if permis { Sense::click() } else { Sense::hover() });
+    let p = ui.painter();
+    if rep.hovered() && permis {
+        p.rect_filled(rect, 3, Color32::from_rgb(0xF6, 0xF2, 0xED));
+    }
+    theme::dessiner_radio(p, pos2(rect.left() + 14.0, rect.top() + 12.0), actif, rep.hovered() && permis);
+    p.text(pos2(rect.left() + 30.0, rect.top() + 12.0), Align2::LEFT_CENTER, titre, if actif { theme::police_gras(13.0) } else { theme::police(13.0) }, TEXTE);
+    p.text(pos2(rect.left() + 30.0, rect.top() + 29.0), Align2::LEFT_CENTER, explication, theme::police(11.5), GRIS);
+    rep.clicked()
+}
+
 /// Bandeau jaune « nouvelle version disponible ». Renvoie vrai au clic sur « Mettre à niveau… ».
 fn bandeau_version(ui: &mut Ui, nv: &NouvelleVersion, actif: bool) -> bool {
     let mut clic = false;
@@ -1273,17 +1591,6 @@ fn bandeau_version(ui: &mut Ui, nv: &NouvelleVersion, actif: bool) -> bool {
         });
     ui.add_space(8.0);
     clic
-}
-
-fn choix_texte(ui: &mut Ui, id: &str, valeur: &mut String, options: &[(&str, &str)]) {
-    let actuel = options.iter().find(|(v, _)| v == valeur).map(|(_, t)| *t).unwrap_or("pour toute nouvelle version");
-    egui::ComboBox::from_id_salt(id).selected_text(actuel).width(230.0).show_ui(ui, |ui| {
-        for (v, t) in options {
-            if ui.selectable_label(valeur == v, *t).clicked() {
-                *valeur = v.to_string();
-            }
-        }
-    });
 }
 
 fn choix(ui: &mut Ui, id: &str, valeur: &mut u32, options: &[(u32, &str)]) {
@@ -1342,9 +1649,12 @@ impl eframe::App for Appli {
             theme::bandeau(ui, NOM, "Garde votre ordinateur à jour et choisit les bons pilotes", Icone::Appli);
             ui.add_space(10.0);
             let avant = self.onglet;
-            theme::onglets(ui, &mut self.onglet, &[("Mises à jour", Icone::Installer), ("Pilotes", Icone::Pilote)]);
+            theme::onglets(ui, &mut self.onglet, &[("Mises à jour", Icone::Installer), ("Pilotes", Icone::Pilote), ("Mise à niveau", Icone::Appli)]);
             if self.onglet == 1 && avant != 1 && self.pilotes.is_none() {
                 self.lancer_pilotes();
+            }
+            if self.onglet == 2 && avant != 2 && self.versions.is_none() {
+                self.lancer_versions();
             }
         });
         egui::Panel::bottom("pied")
@@ -1370,9 +1680,13 @@ impl eframe::App for Appli {
             });
         egui::CentralPanel::default()
             .frame(Frame::new().fill(FOND).inner_margin(Margin { left: 14, right: 14, top: 12, bottom: 6 }))
-            .show(ui, |ui| match self.onglet {
-                1 => self.vue_pilotes(ui),
-                _ => self.vue_maj(ui),
+            .show(ui, |ui| {
+                self.barre_gestionnaire(ui);
+                match self.onglet {
+                    1 => self.vue_pilotes(ui),
+                    2 => self.vue_niveau(ui),
+                    _ => self.vue_maj(ui),
+                }
             });
 
         if self.travail.is_some() {

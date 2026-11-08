@@ -6,6 +6,7 @@ use crate::commun::*;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::os::fd::AsRawFd;
+use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::thread::sleep;
 use std::time::Duration;
@@ -24,13 +25,25 @@ pub fn lancer() {
     let _ = write!(verrou, "{}", std::process::id());
     let _ = verrou.flush();
 
+    // Relance après une mise à jour du gestionnaire : on garde le « premier passage » d'avant
+    let reprise = std::env::var("GMAJ_REPRISE").ok();
     let delai: u64 = std::env::var("GMAJ_DELAI").ok().and_then(|v| v.parse().ok()).unwrap_or(60);
     journal(&format!("veille démarrée, première recherche dans {delai} s"));
     sleep(Duration::from_secs(delai));
     // Au démarrage de l'ordinateur, la bulle s'affiche dès qu'il y a des mises à jour,
     // même si elles avaient déjà été signalées avant.
-    let mut premier = true;
+    let mut premier = reprise.as_deref() != Some("suite");
     loop {
+        if se_mettre_a_jour(premier) {
+            // la nouvelle version prend la place de celle-ci (le verrou est libéré par exec)
+            journal("redémarrage de la veille sur la nouvelle version");
+            let err = Command::new(executable())
+                .arg("--veille")
+                .env("GMAJ_REPRISE", if premier { "premier" } else { "suite" })
+                .env("GMAJ_DELAI", "5")
+                .exec();
+            journal(&format!("relance impossible : {err}"));
+        }
         if !demarrage_actif() && std::env::var_os("GMAJ_FORCER").is_none() {
             journal("lancement au démarrage désactivé : fin de la veille");
             return;
@@ -48,6 +61,34 @@ pub fn lancer() {
             if maintenant().saturating_sub(debut) >= h * 3600 {
                 break;
             }
+        }
+    }
+}
+
+/// Met le gestionnaire à jour depuis GitHub (au démarrage puis toutes les 6 h).
+fn se_mettre_a_jour(premier: bool) -> bool {
+    let reg = Reglages::charger();
+    if !reg.auto_maj_logiciel || !installe_par_paquet() {
+        return false;
+    }
+    let mut etat = EtatVeille::charger();
+    if !premier && maintenant().saturating_sub(etat.t_auto_maj) < 6 * 3600 {
+        return false;
+    }
+    etat.t_auto_maj = maintenant();
+    etat.enregistrer();
+    let Some(v) = derniere_version_github() else { return false };
+    if !plus_recente(&v, VERSION) || !auto_maj_sans_mot_de_passe() {
+        return false;
+    }
+    match auto_maj_silencieuse() {
+        Ok(_) => {
+            journal(&format!("gestionnaire mis à jour : {VERSION} → {v}"));
+            true
+        }
+        Err(e) => {
+            journal(&format!("mise à jour du gestionnaire impossible : {e}"));
+            false
         }
     }
 }

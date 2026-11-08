@@ -110,11 +110,23 @@ pub struct Reglages {
     pub snap: bool,
     pub flatpak: bool,
     pub pilotes: bool,
+    /// Le gestionnaire se met à jour tout seul depuis GitHub
+    pub auto_maj_logiciel: bool,
+    /// Proposer aussi les versions d'Ubuntu en développement
+    pub devel: bool,
 }
 
 impl Default for Reglages {
     fn default() -> Self {
-        Reglages { intervalle_h: 6, rappel_h: 24, snap: true, flatpak: true, pilotes: true }
+        Reglages {
+            intervalle_h: 6,
+            rappel_h: 24,
+            snap: true,
+            flatpak: true,
+            pilotes: true,
+            auto_maj_logiciel: true,
+            devel: false,
+        }
     }
 }
 
@@ -148,6 +160,7 @@ pub struct EtatVeille {
     pub t_recherche_pilotes: u64,
     pub version_signalee: String,
     pub t_version: u64,
+    pub t_auto_maj: u64,
 }
 
 impl EtatVeille {
@@ -661,7 +674,7 @@ pub fn chercher_tout(reglages: &Reglages) -> Recherche {
     r.majs.sort_by(|a, b| (a.groupe, &a.nom).cmp(&(b.groupe, &b.nom)));
     r.redemarrage = redemarrage_necessaire();
     r.age_listes = age_listes();
-    r.nouvelle_version = chercher_nouvelle_version();
+    r.nouvelle_version = chercher_nouvelle_version(reglages.devel);
     r
 }
 
@@ -710,12 +723,13 @@ pub fn essai_devel() -> bool {
 
 /// Demande à l'outil d'Ubuntu s'il existe une nouvelle version (il suit le réglage
 /// « Prompt » de /etc/update-manager/release-upgrades).
-pub fn chercher_nouvelle_version() -> Option<NouvelleVersion> {
+pub fn chercher_nouvelle_version(devel: bool) -> Option<NouvelleVersion> {
+    let devel = devel || essai_devel();
     if !existe("do-release-upgrade") {
         return None;
     }
     let mut args = vec!["-c"];
-    if essai_devel() {
+    if devel {
         args.push("-d");
     }
     let (ok, texte, err) = sortie("do-release-upgrade", &args, true)?;
@@ -724,10 +738,10 @@ pub fn chercher_nouvelle_version() -> Option<NouvelleVersion> {
         let r = l.trim().strip_prefix("New release '")?;
         r.split_once('\'').map(|(v, _)| v.to_string())
     })?;
-    if !ok && !essai_devel() {
+    if !ok && !devel {
         return None;
     }
-    let mut nv = NouvelleVersion { version: version.clone(), developpement: essai_devel(), ..Default::default() };
+    let mut nv = NouvelleVersion { version: version.clone(), developpement: false, ..Default::default() };
     // nom de code dans le fichier téléchargé par l'outil
     let cache = maison().join(".cache/update-manager-core");
     for f in ["meta-release", "meta-release-lts", "meta-release-development"] {
@@ -737,6 +751,7 @@ pub fn chercher_nouvelle_version() -> Option<NouvelleVersion> {
             if champ("Version:").is_some_and(|v| v.trim_end_matches(" LTS") == version.trim_end_matches(" LTS")) {
                 nv.nom = champ("Name:").unwrap_or_default();
                 nv.lts = champ("Version:").is_some_and(|v| v.contains("LTS"));
+                nv.developpement = f == "meta-release-development";
             }
         }
     }
@@ -755,8 +770,8 @@ pub fn prevenir_versions() -> String {
 }
 
 /// Lance l'assistant de mise à niveau d'Ubuntu (sa propre fenêtre, mot de passe demandé).
-pub fn lancer_mise_a_niveau() -> Result<(), String> {
-    let devel = essai_devel();
+pub fn lancer_mise_a_niveau(devel: bool) -> Result<(), String> {
+    let devel = devel || essai_devel();
     if Path::new("/usr/lib/python3/dist-packages/DistUpgrade/DistUpgradeViewGtk3.py").exists() {
         let mut c = Command::new("pkexec");
         c.args(["do-release-upgrade", "--frontend=DistUpgradeViewGtk3"]);
@@ -1015,10 +1030,175 @@ mod tests {
     }
 
     #[test]
+    fn versions() {
+        assert!(plus_recente("1.10.0", "1.9.2"));
+        assert!(!plus_recente("1.1.0", "1.1.0"));
+        assert!(plus_recente("27.04", "26.10"));
+        assert_eq!(fin_support("26.10", false), "juillet 2027");
+        assert_eq!(fin_support("26.04", true), "avril 2031");
+    }
+
+    #[test]
     fn tailles() {
         assert_eq!(lire_taille("299MB"), 299_000_000);
         assert_eq!(lire_taille("118,6 Mo"), 118_600_000);
         assert_eq!(lire_taille("34.1 kB"), 34_100);
         assert_eq!(taille_lisible(12_345_678), "12,3 Mo");
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Liste des versions d'Ubuntu (pour l'onglet « Mise à niveau »)
+// ---------------------------------------------------------------------------
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct VersionUbuntu {
+    pub version: String,
+    pub nom: String,
+    pub lts: bool,
+    pub prise_en_charge: bool,
+    pub developpement: bool,
+    pub installee: bool,
+}
+
+impl VersionUbuntu {
+    /// Fin de prise en charge estimée : 9 mois (version normale) ou 5 ans (LTS).
+    pub fn fin_support(&self) -> String {
+        fin_support(&self.version, self.lts)
+    }
+}
+
+fn nombres(v: &str) -> Vec<u32> {
+    v.split(|c: char| !c.is_ascii_digit()).filter(|x| !x.is_empty()).filter_map(|x| x.parse().ok()).collect()
+}
+
+/// a est-elle plus récente que b ? (« 1.10.0 » > « 1.9.2 », « 27.04 » > « 26.10 »)
+pub fn plus_recente(a: &str, b: &str) -> bool {
+    nombres(a) > nombres(b)
+}
+
+const MOIS: [&str; 12] = [
+    "janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+];
+
+pub fn fin_support(version: &str, lts: bool) -> String {
+    let n = nombres(version);
+    if n.len() < 2 || n[1] == 0 || n[1] > 12 {
+        return String::new();
+    }
+    let (mut annee, mut mois) = (2000 + n[0], n[1]);
+    if lts {
+        annee += 5;
+    } else {
+        mois += 9;
+        if mois > 12 {
+            mois -= 12;
+            annee += 1;
+        }
+    }
+    format!("{} {annee}", MOIS[(mois - 1) as usize])
+}
+
+/// Version installée : (« 26.10 », LTS ?)
+pub fn version_installee() -> (String, bool) {
+    let t = fs::read_to_string("/etc/os-release").unwrap_or_default();
+    let champ = |k: &str| t.lines().find_map(|l| l.strip_prefix(k).map(|v| v.trim_matches('"').to_string())).unwrap_or_default();
+    let v = champ("VERSION_ID=");
+    (v, champ("VERSION=").contains("LTS"))
+}
+
+fn telecharger(url: &str) -> Option<String> {
+    let o = Command::new("curl").args(["-fsSL", "-m", "25", url]).stdin(Stdio::null()).output().ok()?;
+    o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
+}
+
+/// Versions récentes publiées par Ubuntu (la dernière LTS et tout ce qui est plus récent).
+pub fn versions_ubuntu() -> Vec<VersionUbuntu> {
+    let (actuelle, actuelle_lts) = version_installee();
+    let mut liste: Vec<VersionUbuntu> = Vec::new();
+    for (url, devel) in [
+        ("https://changelogs.ubuntu.com/meta-release", false),
+        ("https://changelogs.ubuntu.com/meta-release-development", true),
+    ] {
+        let Some(t) = telecharger(url) else { continue };
+        for bloc in t.split("\n\n") {
+            let champ = |k: &str| bloc.lines().find_map(|l| l.strip_prefix(k).map(|v| v.trim().to_string()));
+            let Some(v) = champ("Version:") else { continue };
+            let num = v.trim_end_matches(" LTS").to_string();
+            let item = VersionUbuntu {
+                lts: v.contains("LTS"),
+                nom: champ("Name:").unwrap_or_default(),
+                prise_en_charge: champ("Supported:").as_deref() == Some("1"),
+                developpement: devel,
+                installee: nombres(&num)[..2.min(nombres(&num).len())] == nombres(&actuelle)[..2.min(nombres(&actuelle).len())],
+                version: num,
+            };
+            liste.retain(|x| x.version != item.version);
+            liste.push(item);
+        }
+    }
+    if !actuelle.is_empty() && !liste.iter().any(|x| x.installee) {
+        liste.push(VersionUbuntu {
+            version: actuelle.clone(),
+            lts: actuelle_lts,
+            prise_en_charge: true,
+            installee: true,
+            ..Default::default()
+        });
+    }
+    liste.sort_by(|a, b| nombres(&a.version).cmp(&nombres(&b.version)));
+    let derniere_lts = liste.iter().filter(|x| x.lts && !x.developpement).map(|x| x.version.clone()).next_back();
+    liste.retain(|x| !plus_recente(&actuelle, &x.version) || Some(&x.version) == derniere_lts.as_ref());
+    liste
+}
+
+// ---------------------------------------------------------------------------
+//  Mise à jour du gestionnaire lui-même depuis GitHub
+// ---------------------------------------------------------------------------
+pub const DEPOT: &str = "jbandrivet/gestionnaire-maj";
+pub const ACTION_AUTO_MAJ: &str = "org.gestionnairemaj.automaj";
+
+/// Dernière version publiée sur GitHub (« 1.2.0 »).
+pub fn derniere_version_github() -> Option<String> {
+    let t = telecharger(&format!("https://api.github.com/repos/{DEPOT}/releases/latest"))?;
+    let j: serde_json::Value = serde_json::from_str(&t).ok()?;
+    let tag = j.get("tag_name")?.as_str()?;
+    Some(tag.trim_start_matches('v').to_string())
+}
+
+/// Le gestionnaire est-il installé par son paquet (et non lancé depuis les sources) ?
+pub fn installe_par_paquet() -> bool {
+    Path::new(&format!("/usr/libexec/{APP}/auto-maj")).exists()
+}
+
+pub fn commande_auto_maj() -> Vec<String> {
+    en_admin(&[&format!("/usr/libexec/{APP}/auto-maj")])
+}
+
+/// Polkit autorise-t-il la mise à jour du gestionnaire sans mot de passe ?
+pub fn auto_maj_sans_mot_de_passe() -> bool {
+    if !installe_par_paquet() {
+        return false;
+    }
+    let pid = std::process::id().to_string();
+    Command::new("pkcheck")
+        .args(["--action-id", ACTION_AUTO_MAJ, "--process", &pid])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Met le gestionnaire à jour en silence ; renvoie la version installée si tout s'est bien passé.
+pub fn auto_maj_silencieuse() -> Result<String, String> {
+    let c = commande_auto_maj();
+    let o = Command::new(&c[0]).args(&c[1..]).stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
+    let texte = String::from_utf8_lossy(&o.stdout).into_owned();
+    if o.status.success() {
+        let v = texte.lines().find_map(|l| l.strip_prefix("@@INSTALLE:")).unwrap_or("").to_string();
+        Ok(v)
+    } else {
+        Err(texte.lines().rev().find(|l| !l.trim().is_empty() && !l.starts_with("@@")).unwrap_or("échec").to_string())
     }
 }

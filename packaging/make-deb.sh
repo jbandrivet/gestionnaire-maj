@@ -14,6 +14,7 @@ rm -rf "$ROOT"
 install -Dm755 target/release/gestionnaire-maj "$ROOT/usr/bin/$PKG"
 install -Dm755 target/release/gestionnaire-maj-aide "$ROOT/usr/libexec/$PKG/aide"
 install -Dm755 packaging/actualiser "$ROOT/usr/libexec/$PKG/actualiser"
+install -Dm755 packaging/auto-maj "$ROOT/usr/libexec/$PKG/auto-maj"
 install -Dm644 packaging/org.gestionnairemaj.policy "$ROOT/usr/share/polkit-1/actions/org.gestionnairemaj.policy"
 install -Dm644 packaging/gestionnaire-maj.desktop "$ROOT/usr/share/applications/$PKG.desktop"
 install -Dm644 packaging/gestionnaire-maj.svg "$ROOT/usr/share/icons/hicolor/scalable/apps/$PKG.svg"
@@ -40,7 +41,7 @@ Section: admin
 Priority: optional
 Architecture: $ARCH
 Installed-Size: $(du -sk "$ROOT/usr" | cut -f1)
-Depends: libc6 (>= 2.34), libgcc-s1, apt, pkexec | policykit-1, polkitd | policykit-1, libgl1, libegl1, libxkbcommon0, libwayland-client0, libwayland-cursor0, libwayland-egl1, libx11-6, libxcursor1, libxrandr2, libxi6
+Depends: libc6 (>= 2.34), libgcc-s1, apt, curl, pkexec | policykit-1, polkitd | policykit-1, libgl1, libegl1, libxkbcommon0, libwayland-client0, libwayland-cursor0, libwayland-egl1, libx11-6, libxcursor1, libxrandr2, libxi6
 Recommends: ubuntu-drivers-common, pciutils, fonts-dejavu-core
 Suggests: snapd, flatpak
 Maintainer: Jean-Baptiste Andrivet <jeanbaptisteandrivet@gmail.com>
@@ -52,7 +53,7 @@ Description: Gestionnaire de mises à jour et de pilotes au look Ubuntu Human (2
  .
  Une case « Lancer au démarrage de l'ordinateur » démarre une veille avec la
  session : quand des mises à jour arrivent, une bulle apparaît avec un bouton
- « Installer ».
+ « Installer ». Le gestionnaire se met lui-même à jour depuis GitHub.
 CONTROL
 
 # À la désinstallation, arrêter les veilles qui tournent encore
